@@ -38,6 +38,7 @@ import java.io.InputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.zip.ZipInputStream
 
 // Update Info Data Model
 data class OtaUpdateInfo(
@@ -79,7 +80,7 @@ class OtaUpdateManager(private val context: Context) {
         }
 
     var demoMode: Boolean
-        get() = prefs.getBoolean("demo_mode", true) // Default true so user can test the OTA flows instantly!
+        get() = prefs.getBoolean("demo_mode", false) // Default false for real live downloads
         set(value) {
             prefs.edit().putBoolean("demo_mode", value).apply()
         }
@@ -114,7 +115,7 @@ class OtaUpdateManager(private val context: Context) {
         
         if (demoMode) {
             withContext(Dispatchers.IO) {
-                delay(1000) // Aesthetic delay for realistic checking experience
+                delay(1000)
             }
             val currentCode = getCurrentVersionCode()
             val mockUpdate = OtaUpdateInfo(
@@ -163,7 +164,7 @@ class OtaUpdateManager(private val context: Context) {
                         _updateState.value = if (forceNotifyUpToDate) OtaUpdateState.UpToDate else OtaUpdateState.Idle
                     }
                 } else {
-                    _updateState.value = OtaUpdateState.Error("HTTP Error: $responseCode")
+                    _updateState.value = OtaUpdateState.Error("HTTP Error: $responseCode when checking $updateUrl")
                 }
                 connection.disconnect()
             } catch (e: Exception) {
@@ -173,39 +174,69 @@ class OtaUpdateManager(private val context: Context) {
         }
     }
 
-    // Download APK directly inside the app with live progress
+    // Helper to unpack a nested .apk inside a downloaded .zip artifact if needed
+    private fun extractApkIfZip(tempFile: File, targetApkFile: File): Boolean {
+        try {
+            var foundApk = false
+            ZipInputStream(tempFile.inputStream()).use { zipInput ->
+                var entry = zipInput.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory && entry.name.endsWith(".apk", ignoreCase = true)) {
+                        FileOutputStream(targetApkFile).use { out ->
+                            zipInput.copyTo(out)
+                        }
+                        foundApk = true
+                        break
+                    }
+                    entry = zipInput.nextEntry
+                }
+            }
+            if (foundApk && isValidApkHeader(targetApkFile)) return true
+        } catch (e: Exception) {
+            Log.d("OtaUpdateManager", "Not a zip artifact with nested apk: ${e.message}")
+        }
+        return false
+    }
+
+    // Validate that the file starts with ZIP/APK magic bytes ('P' 'K' 0x03 0x04) and is > 100KB
+    private fun isValidApkHeader(file: File): Boolean {
+        if (!file.exists() || file.length() < 100 * 1024) return false
+        try {
+            file.inputStream().use { input ->
+                val header = ByteArray(4)
+                val read = input.read(header)
+                if (read == 4) {
+                    return header[0] == 'P'.toByte() &&
+                           header[1] == 'K'.toByte() &&
+                           header[2] == 0x03.toByte() &&
+                           header[3] == 0x04.toByte()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return false
+    }
+
+    // Download APK directly inside the app with live progress & validation
     suspend fun downloadAndInstallApk(info: OtaUpdateInfo) {
         val downloadDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir
+        val tempDownloadFile = File(downloadDir, "download_temp_${info.latestVersionCode}.tmp")
         val apkFile = File(downloadDir, "update_v${info.latestVersionCode}.apk")
-
-        if (demoMode) {
-            // Simulated live download experience for demonstration mode
-            val totalMockBytes = 11_537_320L // ~11.5 MB APK size
-            for (progress in 0..100 step 5) {
-                val currentBytes = (totalMockBytes * progress) / 100
-                _updateState.value = OtaUpdateState.Downloading(
-                    progressPercent = progress,
-                    downloadedBytes = currentBytes,
-                    totalBytes = totalMockBytes,
-                    info = info
-                )
-                delay(120)
-            }
-            try {
-                if (!apkFile.exists()) {
-                    apkFile.writeText("Demo APK Placeholder Content")
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            _updateState.value = OtaUpdateState.ReadyToInstall(apkFile, info)
-            installApk(apkFile)
-            return
-        }
 
         withContext(Dispatchers.IO) {
             try {
                 var currentUrl = info.updateUrl
+                
+                // If updateUrl is a web page release link, open browser directly
+                if (currentUrl.endsWith("/releases") || currentUrl.endsWith("/releases/latest") || !currentUrl.contains(".")) {
+                    withContext(Dispatchers.Main) {
+                        openInBrowser(currentUrl)
+                        _updateState.value = OtaUpdateState.Idle
+                    }
+                    return@withContext
+                }
+
                 var connection: HttpURLConnection
                 var redirectCount = 0
 
@@ -234,13 +265,13 @@ class OtaUpdateManager(private val context: Context) {
                 }
 
                 if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-                    _updateState.value = OtaUpdateState.Error("Failed to download APK. HTTP ${connection.responseCode}")
+                    _updateState.value = OtaUpdateState.Error("Failed to download file. Server returned HTTP ${connection.responseCode}")
                     return@withContext
                 }
 
                 val totalBytes = connection.contentLengthLong
                 val inputStream: InputStream = connection.inputStream
-                val outputStream = FileOutputStream(apkFile)
+                val outputStream = FileOutputStream(tempDownloadFile)
 
                 val buffer = ByteArray(8192)
                 var bytesRead: Int
@@ -269,13 +300,26 @@ class OtaUpdateManager(private val context: Context) {
                 inputStream.close()
                 connection.disconnect()
 
-                if (apkFile.exists() && apkFile.length() > 0) {
+                // Process downloaded file
+                var validApkReady = false
+                if (extractApkIfZip(tempDownloadFile, apkFile)) {
+                    validApkReady = true
+                } else {
+                    tempDownloadFile.copyTo(apkFile, overwrite = true)
+                    validApkReady = isValidApkHeader(apkFile)
+                }
+
+                tempDownloadFile.delete()
+
+                if (validApkReady) {
                     _updateState.value = OtaUpdateState.ReadyToInstall(apkFile, info)
                     withContext(Dispatchers.Main) {
                         installApk(apkFile)
                     }
                 } else {
-                    _updateState.value = OtaUpdateState.Error("Downloaded APK file is empty or corrupted.")
+                    _updateState.value = OtaUpdateState.Error(
+                        "Downloaded file is not a valid Android APK binary.\n\nThe update link (${info.updateUrl}) may point to an HTML webpage or unsupported format. Click 'Open Release Page' to download directly."
+                    )
                 }
 
             } catch (e: Exception) {
@@ -549,6 +593,75 @@ fun OtaUpdateDialog(
                 dismissButton = {
                     TextButton(onClick = onDismiss) {
                         Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            )
+        }
+
+        is OtaUpdateState.Error -> {
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = "Error",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Update Issue", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                    }
+                },
+                text = {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = state.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { manager.openInBrowser(manager.updateUrl) },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("Open Release Page", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismiss) {
+                        Text("Dismiss", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            )
+        }
+
+        is OtaUpdateState.UpToDate -> {
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "Up to date",
+                            tint = Color(0xFF4E9F3D),
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("App is Up to Date", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                    }
+                },
+                text = {
+                    Text(
+                        text = "You are running the latest version (${manager.getCurrentVersionName()} / Build ${manager.getCurrentVersionCode()}).",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = onDismiss) {
+                        Text("OK", fontWeight = FontWeight.Bold)
                     }
                 }
             )
