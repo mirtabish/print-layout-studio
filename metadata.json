@@ -1,0 +1,6 @@
+{
+  "name": "Print Layout Generator",
+  "description": "Layout generator for printing passport-sized photos, QR codes, or labels.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
