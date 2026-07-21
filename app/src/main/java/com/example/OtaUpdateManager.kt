@@ -53,7 +53,7 @@ class OtaUpdateManager(private val context: Context) {
     private val prefs = context.getSharedPreferences("ota_update_prefs", Context.MODE_PRIVATE)
 
     var updateUrl: String
-        get() = prefs.getString("update_url", "https://raw.githubusercontent.com/mirtabish/hello-everyone/main/update.json") ?: ""
+        get() = prefs.getString("update_url", "https://raw.githubusercontent.com/mirtabish/print-layout-studio/main/update.json") ?: ""
         set(value) {
             prefs.edit().putString("update_url", value).apply()
         }
