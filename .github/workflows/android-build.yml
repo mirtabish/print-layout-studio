@@ -20,13 +20,10 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Download Clean Gradle Wrapper JAR
-        run: |
-          mkdir -p gradle/wrapper
-          curl -Lo gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradle/wrapper/gradle-wrapper.jar
-
-      - name: Make Gradle Wrapper Executable
-        run: chmod +x ./gradlew
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.4'
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug
+        run: gradle assembleDebug
