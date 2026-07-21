@@ -3,25 +3,38 @@ package com.example
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import android.util.Log
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
@@ -35,11 +48,18 @@ data class OtaUpdateInfo(
     val isForceUpdate: Boolean
 )
 
-// States representing the update check process
+// States representing the update check and download process
 sealed class OtaUpdateState {
     object Idle : OtaUpdateState()
     object Checking : OtaUpdateState()
     data class UpdateAvailable(val info: OtaUpdateInfo) : OtaUpdateState()
+    data class Downloading(
+        val progressPercent: Int,
+        val downloadedBytes: Long,
+        val totalBytes: Long,
+        val info: OtaUpdateInfo
+    ) : OtaUpdateState()
+    data class ReadyToInstall(val apkFile: File, val info: OtaUpdateInfo) : OtaUpdateState()
     object UpToDate : OtaUpdateState()
     data class Error(val message: String) : OtaUpdateState()
 }
@@ -68,7 +88,7 @@ class OtaUpdateManager(private val context: Context) {
     fun getCurrentVersionCode(): Int {
         return try {
             val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 pInfo.longVersionCode.toInt()
             } else {
                 @Suppress("DEPRECATION")
@@ -92,19 +112,17 @@ class OtaUpdateManager(private val context: Context) {
     suspend fun checkForUpdates(forceNotifyUpToDate: Boolean = false) {
         _updateState.value = OtaUpdateState.Checking
         
-        // Simulate or execute real request based on settings
         if (demoMode) {
             withContext(Dispatchers.IO) {
-                kotlinx.coroutines.delay(1200) // Aesthetic delay for realist checking experience
+                delay(1000) // Aesthetic delay for realistic checking experience
             }
-            // Generate mock update info that is higher than current version code
             val currentCode = getCurrentVersionCode()
             val mockUpdate = OtaUpdateInfo(
                 latestVersionCode = currentCode + 1,
-                latestVersionName = "1.2.0-beta",
-                updateUrl = "https://github.com/mirtabish/hello-everyone",
-                releaseNotes = "• Completely dynamic grid layout logic mapping margins exactly down to 0.1cm!\n• Added beautiful credit badges to creator Mir Zulkifal.\n• Clean vector layout studio adaptive icon package.",
-                isForceUpdate = false // Change to true to preview Force Update blocking state
+                latestVersionName = "1.2.0-ota",
+                updateUrl = "https://github.com/mirtabish/print-layout-studio/releases/download/v1.1/app-debug.apk",
+                releaseNotes = "• Completely dynamic grid layout logic mapping margins exactly down to 0.1cm!\n• Added beautiful credit badges to creator Mir Zulkifal.\n• In-app seamless OTA download and package installer integration.",
+                isForceUpdate = false
             )
             _updateState.value = OtaUpdateState.UpdateAvailable(mockUpdate)
             return
@@ -155,100 +173,387 @@ class OtaUpdateManager(private val context: Context) {
         }
     }
 
-    fun resetState() {
-        _updateState.value = OtaUpdateState.Idle
+    // Download APK directly inside the app with live progress
+    suspend fun downloadAndInstallApk(info: OtaUpdateInfo) {
+        val downloadDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir
+        val apkFile = File(downloadDir, "update_v${info.latestVersionCode}.apk")
+
+        if (demoMode) {
+            // Simulated live download experience for demonstration mode
+            val totalMockBytes = 11_537_320L // ~11.5 MB APK size
+            for (progress in 0..100 step 5) {
+                val currentBytes = (totalMockBytes * progress) / 100
+                _updateState.value = OtaUpdateState.Downloading(
+                    progressPercent = progress,
+                    downloadedBytes = currentBytes,
+                    totalBytes = totalMockBytes,
+                    info = info
+                )
+                delay(120)
+            }
+            try {
+                if (!apkFile.exists()) {
+                    apkFile.writeText("Demo APK Placeholder Content")
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            _updateState.value = OtaUpdateState.ReadyToInstall(apkFile, info)
+            installApk(apkFile)
+            return
+        }
+
+        withContext(Dispatchers.IO) {
+            try {
+                var currentUrl = info.updateUrl
+                var connection: HttpURLConnection
+                var redirectCount = 0
+
+                // Follow HTTP redirects (e.g., GitHub releases redirect to AWS S3 CDN)
+                while (true) {
+                    val urlObj = URL(currentUrl)
+                    connection = urlObj.openConnection() as HttpURLConnection
+                    connection.connectTimeout = 15000
+                    connection.readTimeout = 30000
+                    connection.instanceFollowRedirects = true
+                    connection.setRequestProperty("User-Agent", "PrintLayoutStudio-OTA")
+
+                    val code = connection.responseCode
+                    if (code == HttpURLConnection.HTTP_MOVED_PERM ||
+                        code == HttpURLConnection.HTTP_MOVED_TEMP ||
+                        code == HttpURLConnection.HTTP_SEE_OTHER ||
+                        code == 307 || code == 308) {
+                        currentUrl = connection.getHeaderField("Location")
+                        redirectCount++
+                        if (redirectCount > 5) {
+                            throw Exception("Too many redirects")
+                        }
+                        continue
+                    }
+                    break
+                }
+
+                if (connection.responseCode != HttpURLConnection.HTTP_OK) {
+                    _updateState.value = OtaUpdateState.Error("Failed to download APK. HTTP ${connection.responseCode}")
+                    return@withContext
+                }
+
+                val totalBytes = connection.contentLengthLong
+                val inputStream: InputStream = connection.inputStream
+                val outputStream = FileOutputStream(apkFile)
+
+                val buffer = ByteArray(8192)
+                var bytesRead: Int
+                var downloadedBytes = 0L
+                var lastProgressReportTime = 0L
+
+                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                    outputStream.write(buffer, 0, bytesRead)
+                    downloadedBytes += bytesRead
+
+                    val now = System.currentTimeMillis()
+                    if (now - lastProgressReportTime > 150 || downloadedBytes == totalBytes) {
+                        lastProgressReportTime = now
+                        val percent = if (totalBytes > 0) ((downloadedBytes * 100) / totalBytes).toInt() else 0
+                        _updateState.value = OtaUpdateState.Downloading(
+                            progressPercent = percent,
+                            downloadedBytes = downloadedBytes,
+                            totalBytes = totalBytes,
+                            info = info
+                        )
+                    }
+                }
+
+                outputStream.flush()
+                outputStream.close()
+                inputStream.close()
+                connection.disconnect()
+
+                if (apkFile.exists() && apkFile.length() > 0) {
+                    _updateState.value = OtaUpdateState.ReadyToInstall(apkFile, info)
+                    withContext(Dispatchers.Main) {
+                        installApk(apkFile)
+                    }
+                } else {
+                    _updateState.value = OtaUpdateState.Error("Downloaded APK file is empty or corrupted.")
+                }
+
+            } catch (e: Exception) {
+                Log.e("OtaUpdateManager", "Error downloading update", e)
+                _updateState.value = OtaUpdateState.Error("Download failed: ${e.localizedMessage}")
+            }
+        }
     }
 
-    fun startUpdateDownload(url: String) {
+    // Check if app has permission to install packages on Android 8.0+
+    fun canRequestPackageInstalls(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.packageManager.canRequestPackageInstalls()
+        } else {
+            true
+        }
+    }
+
+    // Open Unknown App Sources Settings
+    fun openUnknownAppSourcesSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                Log.e("OtaUpdateManager", "Could not open unknown app sources settings", e)
+            }
+        }
+    }
+
+    // Trigger Android System Package Installer
+    fun installApk(apkFile: File) {
+        try {
+            if (!canRequestPackageInstalls()) {
+                openUnknownAppSourcesSettings()
+                return
+            }
+
+            val apkUri: Uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.e("OtaUpdateManager", "Failed to launch package installer", e)
+            _updateState.value = OtaUpdateState.Error("Could not launch package installer: ${e.localizedMessage}")
+        }
+    }
+
+    fun openInBrowser(url: String) {
         try {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(intent)
         } catch (e: Exception) {
-            Log.e("OtaUpdateManager", "Could not start update action", e)
+            Log.e("OtaUpdateManager", "Could not open URL", e)
         }
+    }
+
+    fun resetState() {
+        _updateState.value = OtaUpdateState.Idle
     }
 }
 
 @Composable
 fun OtaUpdateDialog(
-    state: OtaUpdateState.UpdateAvailable,
-    onDismiss: () -> Unit,
-    onUpdateClicked: (String) -> Unit
+    state: OtaUpdateState,
+    manager: OtaUpdateManager,
+    onDismiss: () -> Unit
 ) {
-    val info = state.info
-    AlertDialog(
-        onDismissRequest = { if (!info.isForceUpdate) onDismiss() },
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = "Update Available",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(28.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = if (info.isForceUpdate) "Critical Update Required" else "New Update Available!",
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleLarge
-                )
-            }
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "Version ${info.latestVersionName} is now ready.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "Release Notes:",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                ) {
-                    Text(
-                        text = info.releaseNotes,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(12.dp),
-                        lineHeight = MaterialTheme.typography.bodySmall.lineHeight * 1.2
-                    )
+    val coroutineScope = rememberCoroutineScope()
+
+    when (state) {
+        is OtaUpdateState.UpdateAvailable -> {
+            val info = state.info
+            AlertDialog(
+                onDismissRequest = { if (!info.isForceUpdate) onDismiss() },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "Update Icon",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (info.isForceUpdate) "Critical Update Required" else "New Update Available!",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    }
+                },
+                text = {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Version ${info.latestVersionName} (Build ${info.latestVersionCode}) is ready.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Release Notes:",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        ) {
+                            Text(
+                                text = info.releaseNotes,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(12.dp),
+                                lineHeight = MaterialTheme.typography.bodySmall.lineHeight * 1.2
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            coroutineScope.launch {
+                                manager.downloadAndInstallApk(info)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Download & Install", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(onClick = { manager.openInBrowser(info.updateUrl) }) {
+                            Text("Web Link", color = MaterialTheme.colorScheme.primary)
+                        }
+                        if (!info.isForceUpdate) {
+                            TextButton(onClick = onDismiss) {
+                                Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                 }
-                if (info.isForceUpdate) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "This is a mandatory update containing security patches and essential feature corrections.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onUpdateClicked(info.updateUrl) },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text("Update Now", fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            if (!info.isForceUpdate) {
-                TextButton(onClick = onDismiss) {
-                    Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
+            )
         }
-    )
+
+        is OtaUpdateState.Downloading -> {
+            val info = state.info
+            AlertDialog(
+                onDismissRequest = { /* Prevent dismiss during download */ },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.5.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Downloading OTA Update...", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    }
+                },
+                text = {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text("Version ${info.latestVersionName}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        LinearProgressIndicator(
+                            progress = { state.progressPercent / 100f },
+                            modifier = Modifier.fillMaxWidth().height(8.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("${state.progressPercent}%", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                            if (state.totalBytes > 0) {
+                                val downloadedMb = String.format("%.1f", state.downloadedBytes / (1024f * 1024f))
+                                val totalMb = String.format("%.1f", state.totalBytes / (1024f * 1024f))
+                                Text("$downloadedMb MB / $totalMb MB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            )
+        }
+
+        is OtaUpdateState.ReadyToInstall -> {
+            val hasPermission = manager.canRequestPackageInstalls()
+            AlertDialog(
+                onDismissRequest = onDismiss,
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "Success",
+                            tint = Color(0xFF4E9F3D),
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Update Ready to Install!", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                    }
+                },
+                text = {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Download complete! Click below to install the new version ${state.info.latestVersionName}.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        if (!hasPermission) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Warning,
+                                        contentDescription = "Permission Needed",
+                                        tint = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Please allow 'Install unknown apps' permission for Print Layout Studio to complete installation.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (!hasPermission) {
+                                manager.openUnknownAppSourcesSettings()
+                            } else {
+                                manager.installApk(state.apkFile)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text(if (!hasPermission) "Grant Permission" else "Install Update Now", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismiss) {
+                        Text("Later", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            )
+        }
+
+        else -> {}
+    }
 }

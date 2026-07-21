@@ -1279,20 +1279,12 @@ fun PrintLayoutApp(modifier: Modifier = Modifier, viewModel: PrintViewModel = vi
                 otaManager.checkForUpdates(forceNotifyUpToDate = false)
             }
 
-            // Render update dialog if update is detected
-            when (val currentUpdateState = updateState) {
-                is OtaUpdateState.UpdateAvailable -> {
-                    OtaUpdateDialog(
-                        state = currentUpdateState,
-                        onDismiss = { otaManager.resetState() },
-                        onUpdateClicked = { downloadUrl ->
-                            otaManager.startUpdateDownload(downloadUrl)
-                            otaManager.resetState()
-                        }
-                    )
-                }
-                else -> {}
-            }
+            // Render update dialog if update or download is active
+            OtaUpdateDialog(
+                state = updateState,
+                manager = otaManager,
+                onDismiss = { otaManager.resetState() }
+            )
 
             Card(
                 modifier = Modifier
