@@ -1272,7 +1272,6 @@ fun PrintLayoutApp(modifier: Modifier = Modifier, viewModel: PrintViewModel = vi
             val coroutineScope = rememberCoroutineScope()
             var showUrlEditor by remember { mutableStateOf(false) }
             var urlInput by remember { mutableStateOf(otaManager.updateUrl) }
-            var isDemoChecked by remember { mutableStateOf(otaManager.demoMode) }
 
             // Silently check on launch
             LaunchedEffect(Unit) {
@@ -1388,105 +1387,71 @@ fun PrintLayoutApp(modifier: Modifier = Modifier, viewModel: PrintViewModel = vi
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Demonstration Mode",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1C1B1F)
-                            )
-                            Text(
-                                "Simulate incoming update alerts instantly",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF49454F)
-                            )
-                        }
-                        Switch(
-                            checked = isDemoChecked,
-                            onCheckedChange = {
-                                isDemoChecked = it
-                                otaManager.demoMode = it
-                                otaManager.resetState()
-                            },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = Color(0xFF6750a4)
-                            )
+                        Text(
+                            "Production Server Config",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1C1B1F)
                         )
-                    }
-
-                    if (!isDemoChecked) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                        TextButton(
+                            onClick = { showUrlEditor = !showUrlEditor },
+                            contentPadding = PaddingValues(0.dp)
                         ) {
                             Text(
-                                "Production Server Config",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1C1B1F)
-                            )
-                            TextButton(
-                                onClick = { showUrlEditor = !showUrlEditor },
-                                contentPadding = PaddingValues(0.dp)
-                            ) {
-                                Text(
-                                    if (showUrlEditor) "Hide Config" else "Configure URL",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF6750a4)
-                                )
-                            }
-                        }
-
-                        // Always display the Active OTA URL clearly in Extra Bold!
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                "Active Server URL:",
-                                style = MaterialTheme.typography.labelSmall,
+                                if (showUrlEditor) "Hide Config" else "Configure URL",
+                                style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF6750a4)
                             )
-                            SelectionContainer {
-                                Text(
-                                    otaManager.updateUrl,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFF1C1B1F),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
                         }
+                    }
 
-                        if (showUrlEditor) {
-                            OutlinedTextField(
-                                value = urlInput,
-                                onValueChange = {
-                                    urlInput = it
-                                    otaManager.updateUrl = it
-                                },
-                                label = { Text("OTA JSON Server URL", fontWeight = FontWeight.Bold) },
-                                textStyle = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                singleLine = false,
-                                maxLines = 4,
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = Color(0xFF6750a4),
-                                    focusedLabelColor = Color(0xFF6750a4)
-                                )
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
+                    // Always display the Active OTA URL clearly in Extra Bold!
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            "Active Server URL:",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF6750a4)
+                        )
+                        SelectionContainer {
                             Text(
-                                "Tip: Host a tiny JSON file containing latestVersionCode, latestVersionName, and updateUrl on GitHub raw or your domain to update users automatically.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF49454F).copy(alpha = 0.8f)
+                                otaManager.updateUrl,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF1C1B1F),
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
+                    }
+
+                    if (showUrlEditor) {
+                        OutlinedTextField(
+                            value = urlInput,
+                            onValueChange = {
+                                urlInput = it
+                                otaManager.updateUrl = it
+                            },
+                            label = { Text("OTA JSON Server URL", fontWeight = FontWeight.Bold) },
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            singleLine = false,
+                            maxLines = 4,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF6750a4),
+                                focusedLabelColor = Color(0xFF6750a4)
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Tip: Host a tiny JSON file containing latestVersionCode, latestVersionName, and updateUrl on GitHub raw or your domain to update users automatically.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF49454F).copy(alpha = 0.8f)
+                        )
                     }
                 }
             }

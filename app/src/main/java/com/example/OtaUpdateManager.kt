@@ -20,9 +20,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -79,12 +82,6 @@ class OtaUpdateManager(private val context: Context) {
             prefs.edit().putString("update_url", value).apply()
         }
 
-    var demoMode: Boolean
-        get() = prefs.getBoolean("demo_mode", false) // Default false for real live downloads
-        set(value) {
-            prefs.edit().putBoolean("demo_mode", value).apply()
-        }
-
     // Get current app version code and name
     fun getCurrentVersionCode(): Int {
         return try {
@@ -112,22 +109,6 @@ class OtaUpdateManager(private val context: Context) {
     // Main update checking mechanism
     suspend fun checkForUpdates(forceNotifyUpToDate: Boolean = false) {
         _updateState.value = OtaUpdateState.Checking
-        
-        if (demoMode) {
-            withContext(Dispatchers.IO) {
-                delay(1000)
-            }
-            val currentCode = getCurrentVersionCode()
-            val mockUpdate = OtaUpdateInfo(
-                latestVersionCode = currentCode + 1,
-                latestVersionName = "1.2.0-ota",
-                updateUrl = "https://github.com/mirtabish/print-layout-studio/releases/download/v1.1/app-debug.apk",
-                releaseNotes = "• Completely dynamic grid layout logic mapping margins exactly down to 0.1cm!\n• Added beautiful credit badges to creator Mir Zulkifal.\n• In-app seamless OTA download and package installer integration.",
-                isForceUpdate = false
-            )
-            _updateState.value = OtaUpdateState.UpdateAvailable(mockUpdate)
-            return
-        }
 
         withContext(Dispatchers.IO) {
             try {
@@ -530,7 +511,21 @@ fun OtaUpdateDialog(
         }
 
         is OtaUpdateState.ReadyToInstall -> {
-            val hasPermission = manager.canRequestPackageInstalls()
+            var hasPermission by remember { mutableStateOf(manager.canRequestPackageInstalls()) }
+            val lifecycleOwner = LocalLifecycleOwner.current
+
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_RESUME) {
+                        hasPermission = manager.canRequestPackageInstalls()
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                }
+            }
+
             AlertDialog(
                 onDismissRequest = onDismiss,
                 title = {
@@ -579,10 +574,11 @@ fun OtaUpdateDialog(
                 confirmButton = {
                     Button(
                         onClick = {
-                            if (!hasPermission) {
-                                manager.openUnknownAppSourcesSettings()
-                            } else {
+                            val isPermitted = manager.canRequestPackageInstalls()
+                            if (isPermitted) {
                                 manager.installApk(state.apkFile)
+                            } else {
+                                manager.openUnknownAppSourcesSettings()
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
