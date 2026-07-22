@@ -69,6 +69,7 @@ data class DimensionPreset(val name: String, val width: Double, val height: Doub
 val ItemSizePresets = listOf(
     DimensionPreset("Passport Photo (3.5x4.5)", 3.5, 4.5, 0.4),
     DimensionPreset("Stamp / Small (2.5x3)", 2.5, 3.0, 0.3),
+    DimensionPreset("Photo Card (10.2x15.3)", 10.2, 15.3, 0.5),
     DimensionPreset("Mini Wallet (5x5)", 5.0, 5.0, 0.5),
     DimensionPreset("Business Card (9x5)", 9.0, 5.0, 0.6)
 )
@@ -285,8 +286,11 @@ class PrintViewModel : ViewModel() {
     fun getPaperDimensions(): Pair<Double, Double> {
         val s = _state.value
         return when (s.paperSize) {
+            "A4" -> 21.0 to 29.7
+            "A5" -> 14.8 to 21.0
             "US Letter" -> 21.59 to 27.94
             "Legal" -> 21.59 to 35.56
+            "10.2 x 15.3 cm" -> 10.2 to 15.3
             "Custom" -> s.customPaperWidthVal to s.customPaperHeightVal
             else -> 21.0 to 29.7 // A4 default
         }
@@ -1037,7 +1041,7 @@ fun PrintLayoutApp(modifier: Modifier = Modifier, viewModel: PrintViewModel = vi
                                         expanded = paperDropdownExpanded,
                                         onDismissRequest = { paperDropdownExpanded = false }
                                     ) {
-                                        listOf("A4", "US Letter", "Legal", "Custom").forEach { size ->
+                                        listOf("A4", "A5", "US Letter", "Legal", "10.2 x 15.3 cm", "Custom").forEach { size ->
                                             DropdownMenuItem(
                                                 text = { Text(size, fontWeight = FontWeight.Bold) },
                                                 onClick = {
