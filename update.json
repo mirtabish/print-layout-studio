@@ -1,7 +1,7 @@
 {
   "latestVersionCode": 2,
   "latestVersionName": "1.1",
-  "updateUrl": "https://github.com/mirtabish/print-layout-studio/releases/download/v1.1/app-debug.apk",
+  "updateUrl": "https://raw.githubusercontent.com/mirtabish/print-layout-studio/main/apk/app-debug.apk",
   "releaseNotes": "🎉 First OTA Update via GitHub!\n\n• Completely dynamic grid layout logic mapping margins exactly down to 0.1cm!\n• Added beautiful credit badges to creator Mir Zulkifal.\n• Clean vector layout studio adaptive icon package.",
   "isForceUpdate": false
 }
