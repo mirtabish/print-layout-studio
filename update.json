@@ -1,6 +1,6 @@
 {
-  "latestVersionCode": 6,
-  "latestVersionName": "1.5",
+  "latestVersionCode": 7,
+  "latestVersionName": "1.6",
   "updateUrl": "https://raw.githubusercontent.com/mirtabish/print-layout-studio/main/apk/app-debug.apk",
   "releaseNotes": "🖼️ Perfect Rotated Sheet Preview v1.5!\n\n• Fixed rotated image aspect ratios and bounds in the live sheet preview.\n• Rotated images now match the PDF print output exactly without clipping or distortion.",
   "isForceUpdate": false
