@@ -22,7 +22,9 @@ android {
 
   signingConfigs {
     getByName("debug") {
-      val ksFile = file("${rootDir}/debug.keystore")
+      val rootKs = file("${rootDir}/debug.keystore")
+      val homeKs = file("${System.getProperty("user.home")}/.android/debug.keystore")
+      val ksFile = if (rootKs.exists()) rootKs else homeKs
       if (ksFile.exists()) {
         storeFile = ksFile
         storePassword = "android"
