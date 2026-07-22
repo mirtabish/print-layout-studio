@@ -1,7 +1,7 @@
 {
-  "latestVersionCode": 5,
-  "latestVersionName": "1.4",
+  "latestVersionCode": 6,
+  "latestVersionName": "1.5",
   "updateUrl": "https://raw.githubusercontent.com/mirtabish/print-layout-studio/main/apk/app-debug.apk",
-  "releaseNotes": "🔄 New Image Rotation Update v1.4!\n\n• Rotate any selected image by 90°, 180°, or 270° with a single tap.\n• Live sheet preview & high-res PDF printouts immediately reflect rotated photos.\n• Standardized keystore signing for smooth OTA update installations.",
+  "releaseNotes": "🖼️ Perfect Rotated Sheet Preview v1.5!\n\n• Fixed rotated image aspect ratios and bounds in the live sheet preview.\n• Rotated images now match the PDF print output exactly without clipping or distortion.",
   "isForceUpdate": false
 }

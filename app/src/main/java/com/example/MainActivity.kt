@@ -45,6 +45,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -63,6 +64,35 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+
+@Composable
+fun RotatedImage(
+    uri: Uri,
+    rotation: Int,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop
+) {
+    BoxWithConstraints(
+        modifier = modifier.clipToBounds(),
+        contentAlignment = Alignment.Center
+    ) {
+        val w = maxWidth
+        val h = maxHeight
+        val isSwapped = (rotation % 180 != 0)
+        val imgWidth = if (isSwapped) h else w
+        val imgHeight = if (isSwapped) w else h
+
+        Image(
+            painter = rememberAsyncImagePainter(uri),
+            contentDescription = contentDescription,
+            contentScale = contentScale,
+            modifier = Modifier
+                .requiredSize(width = imgWidth, height = imgHeight)
+                .rotate(rotation.toFloat())
+        )
+    }
+}
 
 // Premium Presets Setup
 data class DimensionPreset(val name: String, val width: Double, val height: Double, val spacing: Double)
@@ -787,13 +817,11 @@ fun PrintLayoutApp(modifier: Modifier = Modifier, viewModel: PrintViewModel = vi
                                                 .clip(RoundedCornerShape(8.dp))
                                                 .border(1.dp, Color(0xFF79747E), RoundedCornerShape(8.dp))
                                         ) {
-                                            Image(
-                                                painter = rememberAsyncImagePainter(uri),
+                                            RotatedImage(
+                                                uri = uri,
+                                                rotation = rotation,
                                                 contentDescription = "Selected Picture Thumbnail",
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .rotate(rotation.toFloat())
+                                                modifier = Modifier.fillMaxSize()
                                             )
                                             // Rotate click overlay (bottom-start)
                                             Surface(
@@ -1281,13 +1309,11 @@ fun PrintLayoutApp(modifier: Modifier = Modifier, viewModel: PrintViewModel = vi
 
                                                 if (finalUri != null) {
                                                     val rot = viewModel.getImageRotation(finalUri)
-                                                    Image(
-                                                        painter = rememberAsyncImagePainter(finalUri),
+                                                    RotatedImage(
+                                                        uri = finalUri,
+                                                        rotation = rot,
                                                         contentDescription = "Preview Thumbnail",
-                                                        contentScale = ContentScale.Crop,
-                                                        modifier = Modifier
-                                                            .fillMaxSize()
-                                                            .rotate(rot.toFloat())
+                                                        modifier = Modifier.fillMaxSize()
                                                     )
                                                 }
                                             } else {
