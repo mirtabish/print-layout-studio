@@ -45,6 +45,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -76,6 +77,7 @@ val ItemSizePresets = listOf(
 
 data class LayoutState(
     val images: List<Uri> = emptyList(),
+    val imageRotations: Map<String, Int> = emptyMap(),
     val paperSize: String = "A4",
     val customPaperWidthVal: Double = 21.0,
     val customPaperHeightVal: Double = 29.7,
@@ -118,16 +120,34 @@ class PrintViewModel : ViewModel() {
         _state.value = _state.value.copy(images = _state.value.images + uri)
     }
 
+    fun rotateImage(index: Int) {
+        val list = _state.value.images
+        if (index in list.indices) {
+            val uriStr = list[index].toString()
+            val currentRot = _state.value.imageRotations[uriStr] ?: 0
+            val newRot = (currentRot + 90) % 360
+            val newMap = _state.value.imageRotations.toMutableMap()
+            newMap[uriStr] = newRot
+            _state.value = _state.value.copy(imageRotations = newMap)
+        }
+    }
+
+    fun getImageRotation(uri: Uri): Int {
+        return _state.value.imageRotations[uri.toString()] ?: 0
+    }
+
     fun removeImage(index: Int) {
         val list = _state.value.images.toMutableList()
         if (index in list.indices) {
-            list.removeAt(index)
-            _state.value = _state.value.copy(images = list)
+            val removedUri = list.removeAt(index)
+            val newMap = _state.value.imageRotations.toMutableMap()
+            newMap.remove(removedUri.toString())
+            _state.value = _state.value.copy(images = list, imageRotations = newMap)
         }
     }
 
     fun clearImages() {
-        _state.value = _state.value.copy(images = emptyList())
+        _state.value = _state.value.copy(images = emptyList(), imageRotations = emptyMap())
     }
 
     fun updatePaperSize(size: String) {
@@ -327,7 +347,7 @@ class PrintViewModel : ViewModel() {
         return inSampleSize
     }
 
-    private fun decodeSampledBitmapFromUri(context: Context, uri: Uri, reqWidth: Int, reqHeight: Int): android.graphics.Bitmap? {
+    private fun decodeSampledBitmapFromUri(context: Context, uri: Uri, reqWidth: Int, reqHeight: Int, userRotation: Int = 0): android.graphics.Bitmap? {
         try {
             val options = android.graphics.BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
@@ -343,7 +363,7 @@ class PrintViewModel : ViewModel() {
                 android.graphics.BitmapFactory.decodeStream(inputStream, null, options)
             } ?: return null
 
-            var rotationDegrees = 0
+            var exifRotationDegrees = 0
             try {
                 context.contentResolver.openInputStream(uri)?.use { inputStream ->
                     val exif = android.media.ExifInterface(inputStream)
@@ -351,7 +371,7 @@ class PrintViewModel : ViewModel() {
                         android.media.ExifInterface.TAG_ORIENTATION,
                         android.media.ExifInterface.ORIENTATION_NORMAL
                     )
-                    rotationDegrees = when (orientation) {
+                    exifRotationDegrees = when (orientation) {
                         android.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90
                         android.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180
                         android.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270
@@ -362,8 +382,10 @@ class PrintViewModel : ViewModel() {
                 e.printStackTrace()
             }
 
-            if (rotationDegrees != 0) {
-                val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+            val totalRotation = (exifRotationDegrees + userRotation) % 360
+
+            if (totalRotation != 0) {
+                val matrix = android.graphics.Matrix().apply { postRotate(totalRotation.toFloat()) }
                 val rotated = android.graphics.Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
                 if (rotated != decoded) {
                     decoded.recycle()
@@ -444,7 +466,8 @@ class PrintViewModel : ViewModel() {
 
         // Decode select images to downsampled bitmaps safely
         val bitmaps = s.images.mapNotNull { uri ->
-            decodeSampledBitmapFromUri(context, uri, reqWidthPx, reqHeightPx)
+            val userRot = s.imageRotations[uri.toString()] ?: 0
+            decodeSampledBitmapFromUri(context, uri, reqWidthPx, reqHeightPx, userRot)
         }
 
         if (bitmaps.isEmpty()) {
@@ -755,6 +778,9 @@ fun PrintLayoutApp(modifier: Modifier = Modifier, viewModel: PrintViewModel = vi
                                         .height(115.dp)
                                 ) {
                                     items(state.images.size) { index ->
+                                        val uri = state.images[index]
+                                        val rotation = viewModel.getImageRotation(uri)
+
                                         Box(
                                             modifier = Modifier
                                                 .size(90.dp)
@@ -762,16 +788,34 @@ fun PrintLayoutApp(modifier: Modifier = Modifier, viewModel: PrintViewModel = vi
                                                 .border(1.dp, Color(0xFF79747E), RoundedCornerShape(8.dp))
                                         ) {
                                             Image(
-                                                painter = rememberAsyncImagePainter(state.images[index]),
+                                                painter = rememberAsyncImagePainter(uri),
                                                 contentDescription = "Selected Picture Thumbnail",
                                                 contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize()
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .rotate(rotation.toFloat())
                                             )
+                                            // Rotate click overlay (bottom-start)
+                                            Surface(
+                                                color = Color(0xFF6750a4).copy(alpha = 0.85f),
+                                                modifier = Modifier
+                                                    .size(26.dp)
+                                                    .align(Alignment.BottomStart)
+                                                    .clickable { viewModel.rotateImage(index) },
+                                                shape = RoundedCornerShape(topEnd = 8.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Refresh,
+                                                    contentDescription = "Rotate image button",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.padding(4.dp)
+                                                )
+                                            }
                                             // Delete click overlay
                                             Surface(
-                                                color = Color.Black.copy(alpha = 0.5f),
+                                                color = Color.Black.copy(alpha = 0.6f),
                                                 modifier = Modifier
-                                                    .size(24.dp)
+                                                    .size(26.dp)
                                                     .align(Alignment.TopEnd)
                                                     .clickable { viewModel.removeImage(index) },
                                                 shape = RoundedCornerShape(bottomStart = 8.dp)
@@ -1236,11 +1280,14 @@ fun PrintLayoutApp(modifier: Modifier = Modifier, viewModel: PrintViewModel = vi
                                                 }
 
                                                 if (finalUri != null) {
+                                                    val rot = viewModel.getImageRotation(finalUri)
                                                     Image(
                                                         painter = rememberAsyncImagePainter(finalUri),
                                                         contentDescription = "Preview Thumbnail",
                                                         contentScale = ContentScale.Crop,
-                                                        modifier = Modifier.fillMaxSize()
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .rotate(rot.toFloat())
                                                     )
                                                 }
                                             } else {

@@ -1,7 +1,7 @@
 {
-  "latestVersionCode": 4,
-  "latestVersionName": "1.3",
+  "latestVersionCode": 5,
+  "latestVersionName": "1.4",
   "updateUrl": "https://raw.githubusercontent.com/mirtabish/print-layout-studio/main/apk/app-debug.apk",
-  "releaseNotes": "✨ New Paper Sizes Update v1.3!\n\n• Added standard A4, A5, US Letter, and Legal paper presets.\n• Added 10.2 cm x 15.3 cm (4R Photo Card) paper size and photo preset.\n• Clean dropdown menu selection for quick paper size switching.",
+  "releaseNotes": "🔄 New Image Rotation Update v1.4!\n\n• Rotate any selected image by 90°, 180°, or 270° with a single tap.\n• Live sheet preview & high-res PDF printouts immediately reflect rotated photos.\n• Standardized keystore signing for smooth OTA update installations.",
   "isForceUpdate": false
 }

@@ -68,8 +68,8 @@ jobs:
         if: success() && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.3
-          name: "Print Layout Studio v1.3"
+          tag_name: v1.4
+          name: "Print Layout Studio v1.4"
           body: "Official release build of Print Layout Studio with live in-app OTA update support."
           files: apk/app-debug.apk
         env:
